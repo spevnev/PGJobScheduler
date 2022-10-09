@@ -8,10 +8,7 @@ const CONNECTION_CONFIG: ClientConfig = {
 	port: 5432,
 };
 
-const SCHEDULER_CONFIG: SchedulerConfig = {
-	sub_batch_size: 2,
-	poll_delay: 1000,
-};
+const SCHEDULER_CONFIG: SchedulerConfig = {};
 
 const main = async () => {
 	const client = new JobScheduler("test", CONNECTION_CONFIG, SCHEDULER_CONFIG);

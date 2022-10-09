@@ -23,11 +23,11 @@ export type SchedulerConfig = {
 };
 
 const DEFAULT_CONFIG: SchedulerConfig = {
-	poll_delay: 500,
-	job_length: 2000,
-	sub_batch_size: 16,
-	pub_batch_size: 16,
-	pub_batching_threshold: 250,
+	poll_delay: 750,
+	job_length: 2500,
+	sub_batch_size: 1024,
+	pub_batch_size: 1024,
+	pub_batching_threshold: 500,
 	retries_num: 3,
 };
 
@@ -140,11 +140,12 @@ class JobScheduler {
 	}
 
 	private async _pub() {
-		console.log("Published " + this.batch.length);
+		console.log(`Published ${this.batch.length}`);
 		const values = this.batch.map(({data, uuid}) => `('${uuid}', ${this.pubClient.escapeLiteral(JSON.stringify(data))})`).join(", ");
-		this.pubClient.query(`INSERT INTO ${this.table}(uuid, data) VALUES ${values};`, []);
-		this.batch = this.batch.slice(6);
+		this.batch = [];
 		this.batchTimeout = null;
+
+		this.pubClient.query(`INSERT INTO ${this.table}(uuid, data) VALUES ${values};`, []);
 	}
 
 	async pub(data: DataObject): Promise<string> {

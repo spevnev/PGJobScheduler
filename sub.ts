@@ -8,14 +8,16 @@ const CONNECTION_CONFIG: ClientConfig = {
 	port: 5432,
 };
 
+// 18.5k/s
 const main = async () => {
+	let i = 0;
 	const callback = async (data: any) => {
-		await new Promise(res => setTimeout(() => res(null), 50));
-		console.log(`Processed ${data.num}`);
+		if (i === 0) console.time("sub");
+		if (data.num > 0.7 && Math.random() > 0.5) throw new Error("error");
+		if (++i % 1000 === 0) console.timeLog("sub", i);
 	};
 
-	const sub = new Subscriber(callback, "test", CONNECTION_CONFIG, {});
-	sub.sub();
+	new Subscriber(callback, "test", CONNECTION_CONFIG).sub();
 };
 
 main();

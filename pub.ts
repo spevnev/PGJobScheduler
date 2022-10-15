@@ -11,8 +11,13 @@ const CONNECTION_CONFIG: ClientConfig = {
 const main = async () => {
 	const pub = new Publisher("test", CONNECTION_CONFIG, {});
 
-	const arr: Promise<string>[] = [];
-	for (let i = 0; i < 10 ** 5; i++) arr.push(pub.pub({num: Math.random()}));
+	console.time("pub");
+	for (let i = 0; i <= 10 ** 5; i++) {
+		await pub.pub({num: Math.random()});
+		if (i % 1000 === 0) console.timeLog("pub", i);
+	}
+	console.timeEnd("pub");
+	process.exit();
 };
 
 main();

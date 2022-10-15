@@ -2,15 +2,13 @@ import {Client, ClientConfig} from "pg";
 import {v4 as generateUUID} from "uuid";
 import {initDB} from "./db";
 
-type DataObject = {[key: string]: any};
-
 export type PublisherConfig = {
 	batch_size?: number;
 	batch_threshold?: number;
 };
 
 const DEFAULT_CONFIG: PublisherConfig = {
-	batch_size: 1000,
+	batch_size: 100,
 	batch_threshold: 333,
 };
 
@@ -19,9 +17,9 @@ class Publisher {
 	private connectionConfig?: ClientConfig;
 
 	private client!: Client;
-	private table!: string;
+	private table: string;
 
-	private batch: {uuid: string; data: DataObject}[] = [];
+	private batch: {uuid: string; data: any}[] = [];
 	private batchTimeout: NodeJS.Timeout | null = null;
 
 	constructor(table: string, connectionConfig: ClientConfig, schedulerConfig: PublisherConfig = {}) {
@@ -48,10 +46,10 @@ class Publisher {
 		this.batch = [];
 		this.batchTimeout = null;
 
-		this.client.query(`INSERT INTO ${this.table}(uuid, data) VALUES ${values};`, []);
+		await this.client.query(`INSERT INTO ${this.table} (uuid, data) VALUES ${values};`, []);
 	}
 
-	async pub(data: DataObject): Promise<string> {
+	async pub(data: any): Promise<string> {
 		if (!this.client) await this.init();
 
 		const uuid = generateUUID();
@@ -59,7 +57,7 @@ class Publisher {
 
 		if (this.batch.length === this.schedulerConfig.batch_size) {
 			if (this.batchTimeout) clearTimeout(this.batchTimeout);
-			this._pub();
+			await this._pub();
 		}
 		if (!this.batchTimeout) this.batchTimeout = setTimeout(this._pub.bind(this), this.schedulerConfig.batch_threshold);
 

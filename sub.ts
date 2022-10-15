@@ -8,7 +8,6 @@ const CONNECTION_CONFIG: ClientConfig = {
 	port: 5432,
 };
 
-// 18.5k/s
 const main = async () => {
 	let i = 0;
 	const callback = async (data: any) => {

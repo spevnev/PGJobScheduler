@@ -6,8 +6,7 @@ type SubCallback = (data: any) => Promise<void>;
 
 type Job = {
 	data: any;
-	uuid: string;
-	failures: number;
+	job_id: string;
 };
 
 export type SubscriberConfig = {
@@ -15,26 +14,70 @@ export type SubscriberConfig = {
 	poll_batch_size?: number;
 	execution_batch_size?: number;
 	job_length?: number;
-	retries_num?: number;
+	max_attempts?: number;
 };
-
-// poll | exec | rate
-// 100    50     ~11k/s
-// 200    50     ~17k/s
-// 300    75     ~19k/s
-// 500    199    ~22k/s
-// 1000   100    ~27k/s
-// 5000   100    ~35k/s
-// 10000  2500   ~40k/s
-// 50000  10000  ~60k/s
 
 const DEFAULT_CONFIG: SubscriberConfig = {
 	poll_delay: 1000,
 	job_length: 3000,
 	poll_batch_size: 200,
 	execution_batch_size: 50,
-	retries_num: 5,
+	max_attempts: 5,
 };
+
+const POLL_JOBS_QUERY = (table: string) => `
+WITH ready_jobs AS (
+    SELECT *, (attempts < $1) as is_valid FROM ${table}
+    WHERE taken_until < NOW()
+    ORDER BY order_id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+), updating_jobs AS (
+    UPDATE ${table} t
+	SET attempts = (
+        CASE jobs.taken_until != '-infinity' AND jobs.taken_until < NOW()
+        WHEN true THEN jobs.attempts + 1
+        ELSE jobs.attempts
+        END
+    ), 
+    taken_until = (
+        CASE jobs.is_valid
+        WHEN true THEN NOW() + $3::INT * INTERVAL '1 millisecond'
+        ELSE 'infinity'
+        END
+    ),
+    order_id = (
+        CASE jobs.is_valid
+        WHEN true THEN jobs.order_id
+        ELSE ${MAX_BIGINT}::BIGINT
+        END
+    ),
+    taken_by = $4
+	FROM ready_jobs AS jobs
+	WHERE t.job_id = jobs.job_id
+) 
+SELECT job_id, data FROM ready_jobs 
+WHERE is_valid = true;
+`;
+
+const UPDATE_JOBS_QUERY = (table: string, values: string) => `
+UPDATE ${table} t
+SET order_id = (
+    CASE v.finished OR t.attempts = $1
+    WHEN true THEN ${MAX_BIGINT}::BIGINT
+    ELSE t.order_id
+    END
+), taken_until = (
+    CASE v.finished OR t.attempts = $1
+    WHEN true THEN 'infinity'
+    ELSE t.taken_until
+    END
+)
+FROM (VALUES ${values}) AS v(job_id, finished) 
+WHERE t.job_id = v.job_id AND t.taken_by = $2;
+`;
+
+const MAX_BIGINT = "9223372036854775807";
 
 class Subscriber {
 	private connectionConfig?: ClientConfig;
@@ -73,49 +116,32 @@ class Subscriber {
 	}
 
 	private async poll(): Promise<void> {
-		if (!this.schedulerConfig.execution_batch_size || !this.schedulerConfig.poll_batch_size) throw new Error("Error: no execution/poll batch size!");
+		const {execution_batch_size, poll_batch_size, poll_delay, max_attempts, job_length} = this.schedulerConfig;
+		if (!execution_batch_size || !poll_batch_size) throw new Error("Error: no execution/poll batch size!");
 
-		const jobs: Job[] = (
-			await this.client.query(
-				`WITH 
-                e as (SELECT * FROM ${this.table} WHERE taken_until < NOW()::TIMESTAMP AND finished = false AND failures <= $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED), 
-                _ as (UPDATE ${this.table} t SET taken_until = (SELECT NOW()::TIMESTAMP + $3::INT * INTERVAL '1 millisecond'), taken_by = $4 FROM e WHERE t.uuid = e.uuid), 
-                f as (SELECT uuid FROM e WHERE taken_until != '-infinity' AND taken_until < NOW()::TIMESTAMP), 
-                __ as (UPDATE ${this.table} t SET failures = t.failures + 1 FROM f WHERE t.uuid = f.uuid) 
-                SELECT data, uuid, failures FROM e;`,
-				[this.schedulerConfig.retries_num, this.schedulerConfig.poll_batch_size, this.schedulerConfig.job_length, this.id]
-			)
-		).rows;
+		const jobs: Job[] = (await this.client.query(POLL_JOBS_QUERY(this.table), [max_attempts, poll_batch_size, job_length, this.id])).rows;
 
-		for (let i = 0; i < Math.ceil(jobs.length / this.schedulerConfig.execution_batch_size); i++) {
-			const failed: Job[] = [];
-			const finished: Job[] = [];
+		for (let i = 0; i < Math.ceil(jobs.length / execution_batch_size); i++) {
+			const finishedJobs = new Set<string>();
 
-			const job_batch = jobs.slice(i * this.schedulerConfig.execution_batch_size, (i + 1) * this.schedulerConfig.execution_batch_size);
+			const job_batch = jobs.slice(i * execution_batch_size, (i + 1) * execution_batch_size);
 			await Promise.all(
-				job_batch.map(async job => {
+				job_batch.map(async ({data, job_id}) => {
 					try {
-						await this.callback(job.data);
-						finished.push(job);
+						await this.callback(data);
+						finishedJobs.add(job_id);
 					} catch (e) {
-						failed.push(job);
+						return;
 					}
 				})
 			);
 
-			const values: string[] = [];
-			for (let j = 0; j < finished.length; j++) values.push(`('${finished[j].uuid}', true, ${finished[j].failures})`);
-			for (let j = 0; j < failed.length; j++) values.push(`('${failed[j].uuid}', false, ${failed[j].failures + 1})`);
-
-			const string = values.join(",");
-			await this.client.query(
-				`UPDATE ${this.table} t SET failures = v.failures, finished = v.finished FROM (VALUES ${string}) AS v(uuid, finished, failures) WHERE t.uuid = v.uuid AND t.taken_by = $1;`,
-				[this.id]
-			);
+			const values = jobs.map(({job_id}) => `('${job_id}', ${finishedJobs.has(job_id)})`).join(",");
+			await this.client.query(UPDATE_JOBS_QUERY(this.table, values), [max_attempts, this.id]);
 		}
 
-		if (jobs.length === this.schedulerConfig.poll_batch_size) this.poll();
-		else setTimeout(this.poll.bind(this), this.schedulerConfig.poll_delay);
+		if (jobs.length > 0) this.poll();
+		else setTimeout(this.poll.bind(this), poll_delay);
 	}
 
 	async sub() {

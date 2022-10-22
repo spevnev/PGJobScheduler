@@ -46,7 +46,7 @@ class Publisher {
 		this.batch = [];
 		this.batchTimeout = null;
 
-		await this.client.query(`INSERT INTO ${this.table} (uuid, data) VALUES ${values};`, []);
+		await this.client.query(`INSERT INTO ${this.table} (job_id, data) VALUES ${values};`, []);
 	}
 
 	async pub(data: any): Promise<string> {

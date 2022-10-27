@@ -9,7 +9,7 @@ const CONNECTION_CONFIG: ClientConfig = {
 };
 
 const main = async () => {
-	const pub = new Publisher("test", CONNECTION_CONFIG, {});
+	const pub = new Publisher("test", CONNECTION_CONFIG, {}, "test");
 
 	console.time("pub");
 	for (let i = 0; i <= 10 ** 5; i++) {

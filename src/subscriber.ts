@@ -1,6 +1,6 @@
-import {Client, ClientConfig} from "pg";
-import {initDB} from "./db";
+import {ClientConfig} from "pg";
 import {v4 as generateUUID} from "uuid";
+import GenericClient from "./client";
 
 type SubCallback = (data: any) => Promise<void>;
 
@@ -79,21 +79,14 @@ WHERE t.job_id = v.job_id AND t.taken_by = $2;
 
 const MAX_BIGINT = "9223372036854775807";
 
-class Subscriber {
-	private connectionConfig?: ClientConfig;
-	private schedulerConfig: SubscriberConfig;
-
-	private client!: Client;
-	private table: string;
-
-	private id!: string;
+class Subscriber extends GenericClient<SubscriberConfig> {
+	private id: string;
 	private callback: SubCallback;
 
-	constructor(callback: SubCallback, table: string, connectionConfig: ClientConfig, schedulerConfig: SubscriberConfig = {}) {
+	constructor(callback: SubCallback, table: string, connectionConfig: ClientConfig, schedulerConfig: SubscriberConfig = {}, schema = "public") {
+		super(table, schema, connectionConfig, {...DEFAULT_CONFIG, ...schedulerConfig});
 		this.callback = callback;
-		this.table = table;
-		this.connectionConfig = connectionConfig;
-		this.schedulerConfig = {...DEFAULT_CONFIG, ...schedulerConfig};
+		this.id = generateUUID();
 
 		if (
 			this.schedulerConfig.execution_batch_size &&
@@ -101,18 +94,6 @@ class Subscriber {
 			this.schedulerConfig.execution_batch_size > this.schedulerConfig.poll_batch_size
 		)
 			throw new Error("Execution batch size can't be less than poll batch size!");
-	}
-
-	private async init() {
-		try {
-			this.client = new Client(this.connectionConfig);
-			await this.client.connect();
-		} catch (e) {
-			throw new Error("Error connecting to DB!");
-		}
-
-		this.table = this.client.escapeIdentifier(this.table);
-		await initDB(this.client, this.table);
 	}
 
 	private async poll(): Promise<void> {
@@ -146,7 +127,6 @@ class Subscriber {
 
 	async sub() {
 		if (!this.client) await this.init();
-		if (!this.id) this.id = generateUUID();
 		this.poll();
 	}
 }

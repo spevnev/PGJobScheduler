@@ -1,6 +1,6 @@
-import {Client, ClientConfig} from "pg";
+import {ClientConfig} from "pg";
 import {v4 as generateUUID} from "uuid";
-import {initDB} from "./db";
+import GenericClient from "./client";
 
 export type PublisherConfig = {
 	batch_size?: number;
@@ -12,33 +12,12 @@ const DEFAULT_CONFIG: PublisherConfig = {
 	batch_threshold: 333,
 };
 
-class Publisher {
-	private schedulerConfig: PublisherConfig;
-	private connectionConfig?: ClientConfig;
-
-	private client!: Client;
-	private table: string;
-
+class Publisher extends GenericClient<PublisherConfig> {
 	private batch: {uuid: string; data: any}[] = [];
 	private batchTimeout: NodeJS.Timeout | null = null;
 
-	constructor(table: string, connectionConfig: ClientConfig, schedulerConfig: PublisherConfig = {}) {
-		this.table = table;
-		this.connectionConfig = connectionConfig;
-		this.schedulerConfig = {...DEFAULT_CONFIG, ...schedulerConfig};
-	}
-
-	private async init() {
-		try {
-			this.client = new Client(this.connectionConfig);
-			await this.client.connect();
-		} catch (e) {
-			throw new Error("Error connecting to DB!");
-		}
-
-		this.table = this.client.escapeIdentifier(this.table);
-
-		await initDB(this.client, this.table);
+	constructor(table: string, connectionConfig: ClientConfig, schedulerConfig: PublisherConfig = {}, schema = "public") {
+		super(table, schema, connectionConfig, {...DEFAULT_CONFIG, ...schedulerConfig});
 	}
 
 	private async _pub() {

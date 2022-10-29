@@ -13,7 +13,7 @@ const main = async () => {
 
 	console.time("pub");
 	for (let i = 0; i <= 10 ** 5; i++) {
-		await pub.pub({num: Math.random()});
+		await pub.pub("test", new Date(Date.now() + 60 * 1000));
 		if (i % 1000 === 0) console.timeLog("pub", i);
 	}
 	console.timeEnd("pub");
